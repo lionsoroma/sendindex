@@ -12,8 +12,7 @@ from dotenv import load_dotenv
 from importlib import reload
 from email.mime.text import MIMEText
 from email.header import Header
-
-no_errors = False
+from selenium.common.exceptions import WebDriverException
 
 
 def get_contacts(filename):
@@ -37,7 +36,7 @@ def get_data_index(filename):
     return dict(index_of_counter)
 
 
-def send_email(body_text):
+def send_email(event_stack):
     base_path = os.path.dirname(os.path.abspath(__file__))
     config_path = os.path.join(base_path, "email.ini")
     if os.path.exists(config_path):
@@ -52,7 +51,7 @@ def send_email(body_text):
     passwords = cfg.get("smtp", "passwords")
     ports = cfg.get("smtp", "ports")
     subject = 'BOT eps.te.ua'
-    msg = MIMEText(body_text, 'plain', 'utf-8')
+    msg = MIMEText('\n'.join(event_stack), 'plain', 'utf-8')
     msg['Subject'] = Header(subject, 'utf-8')
     msg['From'] = from_addr
     msg['To'] = ', '.join(emails)
@@ -83,54 +82,60 @@ def meter_id_lit(x):
 
 
 def set_data_indexes(indexes, private_link):
+    no_errors = False
+    event_stack = []
     if len(indexes) == 0:
         pass
     else:
-        driver = webdriver.Firefox()
-        driver.get(private_link)
-        table = driver.find_element_by_xpath("//table[@class='meters-table']")
-        rows = table.find_elements_by_tag_name("tr")
-        for row in rows:
-            col = row.find_elements_by_tag_name("td")
-            if len(col) > 0:
-                meter_id = col[1].find_element_by_id('meter_id')
-                temp = meter_id.get_attribute('value')
-                if meter_id_lit(temp) in indexes.keys():
-                    try:
-                        consumption = str(round(float(indexes[meter_id_lit(temp)])))
-                        reading = col[4].find_element_by_id('reading')
-                        reading.send_keys(consumption)
-                        reading.send_keys(Keys.RETURN)
-                        intvalue = reading.get_attribute('value')
-                    except Exception:
-                        error = sys.exc_info()[0]
-                        reload(sys)
-                        body_text = 'Виникла помилка при введені даних!'
-
-                        send_email(body_text)
-                    else:
-                        no_errors = True
-        if no_errors:
-            try:
-                button_first = driver.find_element_by_xpath("//button[@id='set_meter_readings']")
-                driver.execute_script("arguments[0].click();", button_first)
-            except Exception:
-                error = sys.exc_info()[0]
-            else:
+        try:
+            driver = webdriver.Chrome()
+            event_stack.append('WebDriver ініціалізовано успішно!')
+            driver.get(private_link)
+            table = driver.find_element_by_xpath("//table[@class='meters-table']")
+            rows = table.find_elements_by_tag_name("tr")
+            for row in rows:
+                col = row.find_elements_by_tag_name("td")
+                if len(col) > 0:
+                    meter_id = col[1].find_element_by_id('meter_id')
+                    temp = meter_id.get_attribute('value')
+                    if meter_id_lit(temp) in indexes.keys():
+                        try:
+                            consumption = str(round(float(indexes[meter_id_lit(temp)])))
+                            reading = col[4].find_element_by_id('reading')
+                            reading.send_keys(consumption)
+                            reading.send_keys(Keys.RETURN)
+                            int_value = reading.get_attribute('value')
+                            event_stack.append('Показник: ' + int_value + ' м.куб/кВт*год. для ' + meter_id_lit(temp) +
+                                               '(номер лічильника: ' + temp + ') введений успішно!')
+                        except WebDriverException as e:
+                            reload(sys)
+                            event_stack.append('Виникла помилка при введені даних для ' + meter_id_lit(temp) +
+                                               '(номер лічильника: ' + temp + '): ' + e.msg)
+                        else:
+                            no_errors = True
+            if no_errors:
                 try:
-                    driver.find_element_by_xpath("//button[@id='confirm_yes_button']").click()
-                except Exception:
-                    error = sys.exc_info()[0]
-                    reload(sys)
-                    body_text = 'Виникла помилка при введені даних!'
-
-                    send_email(body_text)
+                    button_first = driver.find_element_by_xpath("//button[@id='set_meter_readings']")
+                    driver.execute_script("arguments[0].click();", button_first)
+                    event_stack.append("Кнопка 'передати показники' натиснута успішно! ")
+                except WebDriverException as e:
+                    event_stack.append("При натисканні кнопки 'передати показники' виникла помилка: " + e.msg)
                 else:
-                    reload(sys)
-                    body_text = 'Всі дані передано успішно! ' + private_link
-
-                    send_email(body_text)
-        driver.close()
+                    try:
+                        driver.find_element_by_xpath("//button[@id='confirm_yes_button']").click()
+                        event_stack.append("Кнопка підтвердження натиснута успішно! ")
+                    except WebDriverException as e:
+                        reload(sys)
+                        event_stack.append("При натисканні кнопки підтвердження виникла помилка: " + e.msg)
+                    else:
+                        reload(sys)
+            driver.close()
+            if no_errors:
+                event_stack.append('Всі дані передано успішно!')
+        except WebDriverException as e:
+            event_stack.append('Помилка при ініціалізації WebDriver (дані не передано!): ' + e.msg)
+        event_stack.append(private_link)
+        return event_stack
 
 
 def get_private_link():
@@ -141,7 +146,8 @@ def get_private_link():
 def main():
     indexes = get_data_index(get_filename())
     if indexes:
-        set_data_indexes(indexes, get_private_link())
+        event_stack = set_data_indexes(indexes, get_private_link())
+        send_email(event_stack)
 
 
 if __name__ == '__main__':
