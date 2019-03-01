@@ -13,6 +13,7 @@ from importlib import reload
 from email.mime.text import MIMEText
 from email.header import Header
 from selenium.common.exceptions import WebDriverException
+from itertools import zip_longest
 
 
 def get_contacts(filename):
@@ -27,13 +28,32 @@ def get_contacts(filename):
 
 def get_data_index(filename):
     index_of_counter = {}
+    errors_status = []
     base_path = os.path.dirname(os.path.abspath(__file__))
     filename_path = os.path.join(base_path, filename)
-    with codecs.open(filename_path, mode='r', encoding='utf-8') as data_index_file:
-        for data_index in data_index_file:
-            key_words = data_index.split(' ')
-            index_of_counter = zip(key_words[::2], key_words[1::2])
-    return dict(index_of_counter)
+    if os.path.exists(filename_path):
+        if os.stat(filename_path).st_size > 0:
+            with codecs.open(filename_path, mode='r', encoding='utf-8') as data_index_file:
+                for data_index in data_index_file:
+                    words = data_index.split(' ')
+                    key_words = list(filter(None, words[::2]))
+                    value_words = list(filter(None, words[1::2]))
+                    quantity_keys = len(key_words)
+                    quantity_values = len(value_words)
+                    index_of_counter = dict(zip_longest(key_words, value_words, fillvalue=None))
+                    if quantity_keys == quantity_values:
+                        return errors_status, index_of_counter
+                    else:
+                        errors_status.append("Невірна кількість записів 'ключ:значення' у файлі: " + filename + " !")
+                        errors_status.append("Ключів: " + str(quantity_keys) + " ,значень: " + str(quantity_values))
+                        errors_status.append(data_index)
+                        return errors_status, index_of_counter
+        else:
+            errors_status.append("Файл '" + filename + "' пустий!")
+            return errors_status, index_of_counter
+    else:
+        errors_status.append("Помилка: файл '" + filename + "' не знайдено!")
+        return errors_status, index_of_counter
 
 
 def send_email(event_stack):
@@ -144,14 +164,17 @@ def get_private_link():
 
 
 def main():
-    indexes = get_data_index(get_filename())
-    if indexes:
+    errors, indexes = get_data_index(get_filename())
+    if indexes and not errors:
         event_stack = set_data_indexes(indexes, get_private_link())
         send_email(event_stack)
+    else:
+        send_email(errors)
 
 
 if __name__ == '__main__':
     main()
+
 
 
 
